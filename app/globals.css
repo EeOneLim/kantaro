@@ -1,26 +1,59 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
+/*
+  Design tokens for Kantaro.
+  These variables are registered with Tailwind v4's @theme system,
+  which means you can use them as utility classes (e.g. bg-background, text-accent).
+*/
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Colors */
+  --color-background: #0a0a0a;
+  --color-surface: #141414;      /* slightly lighter dark, for cards */
+  --color-border: #2a2a2a;       /* subtle border color */
+  --color-foreground: #e5e5e5;   /* off-white — avoid pure white on dark */
+  --color-muted: #888888;        /* secondary text, timestamps, metadata */
+  --color-accent: #f59e0b;       /* warm amber — primary interactive color */
+  --color-accent-hover: #fbbf24; /* lighter amber for hover states */
+
+  /* Fonts — CSS variables injected by next/font */
+  --font-heading: var(--font-sora);
+  --font-body: var(--font-dm-sans);
+
+  /* Animation: search results fade in from slightly below */
+  --animate-fade-in: fadeIn 200ms ease both;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
+/* Pulsing mic animation used in SubtitlePanel loading state (AC-7.1) */
+@keyframes micPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.25; }
+}
+.animate-mic-pulse {
+  animation: micPulse 1.4s ease-in-out infinite;
+}
+
+/* Hide scrollbars on the horizontal channel row without losing scroll functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-dm-sans), system-ui, sans-serif;
 }
