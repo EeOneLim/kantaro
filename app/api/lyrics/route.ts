@@ -41,7 +41,9 @@ export async function GET(request: NextRequest) {
       rawCues = defaultResult.value;
     } else {
       // Both failed — surface the Spanish error (more informative)
-      throw esResult.status === "rejected" ? esResult.reason : defaultResult.reason;
+      throw esResult.status === "rejected"
+        ? (esResult as PromiseRejectedResult).reason
+        : (defaultResult as PromiseRejectedResult).reason;
     }
 
     // AC-1.7: Guard against empty or junk caption tracks
