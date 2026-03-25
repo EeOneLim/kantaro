@@ -9,6 +9,10 @@ const MAX_CUES = 300;
 // Translate in batches so we never exceed Gemini's input token limit in one call.
 const TRANSLATION_CHUNK_SIZE = 80;
 
+// Fix 4: Server-side in-memory cache. Persists across requests on the same
+// server instance so repeat plays (new tabs, page refreshes) cost nothing.
+const serverLyricsCache = new Map<string, LyricCue[]>();
+
 export async function GET(request: NextRequest) {
   const videoId = request.nextUrl.searchParams.get("videoId");
   if (!videoId) {
@@ -16,14 +20,28 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Attempt to fetch Spanish captions. If the video has no Spanish track,
-    // fall back to whatever language is available (auto-generated captions).
+    // Fix 4: Serve from server cache if already fetched (survives page refreshes
+    // and new tabs, unlike the client-side session cache).
+    if (serverLyricsCache.has(videoId)) {
+      return NextResponse.json({ cues: serverLyricsCache.get(videoId) });
+    }
+
+    // Fix 3: Fire both the Spanish-specific and default language requests in
+    // parallel. Previously sequential, this eliminates ~200–800ms on the
+    // fallback path (when no explicit Spanish track exists).
     let rawCues;
-    try {
-      rawCues = await YoutubeTranscript.fetchTranscript(videoId, { lang: "es" });
-    } catch {
-      // No Spanish track — try default (often auto-generated in the video's language)
-      rawCues = await YoutubeTranscript.fetchTranscript(videoId);
+    const [esResult, defaultResult] = await Promise.allSettled([
+      YoutubeTranscript.fetchTranscript(videoId, { lang: "es" }),
+      YoutubeTranscript.fetchTranscript(videoId),
+    ]);
+
+    if (esResult.status === "fulfilled" && esResult.value?.length) {
+      rawCues = esResult.value;
+    } else if (defaultResult.status === "fulfilled" && defaultResult.value?.length) {
+      rawCues = defaultResult.value;
+    } else {
+      // Both failed — surface the Spanish error (more informative)
+      throw esResult.status === "rejected" ? esResult.reason : defaultResult.reason;
     }
 
     // AC-1.7: Guard against empty or junk caption tracks
@@ -78,6 +96,9 @@ export async function GET(request: NextRequest) {
       english: translations[i] || cue.spanish,
     }));
 
+    // Fix 4: Populate server cache before responding
+    serverLyricsCache.set(videoId, cues);
+
     return NextResponse.json({ cues });
   } catch (error) {
     console.error("[/api/lyrics] fetch failed:", error);
@@ -98,16 +119,18 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Split lines into chunks and translate each chunk sequentially.
-// This keeps each Gemini request small and avoids token-limit failures.
+// Split lines into chunks and translate all chunks in parallel.
+// Each chunk is small enough to stay within Gemini's token limits;
+// firing them simultaneously cuts total translation time from
+// (N × avg_chunk_time) down to max(chunk_times) — typically 3× faster.
 async function translateInChunks(lines: string[]): Promise<string[]> {
-  const results: string[] = [];
+  const chunks: string[][] = [];
   for (let i = 0; i < lines.length; i += TRANSLATION_CHUNK_SIZE) {
-    const chunk = lines.slice(i, i + TRANSLATION_CHUNK_SIZE);
-    const translated = await translateWithGemini(chunk);
-    results.push(...translated);
+    chunks.push(lines.slice(i, i + TRANSLATION_CHUNK_SIZE));
   }
-  return results;
+  // Fix 1: All chunk requests fire at once; we wait for all to settle.
+  const translatedChunks = await Promise.all(chunks.map(translateWithGemini));
+  return translatedChunks.flat();
 }
 
 // Translate one chunk of Spanish lyric lines to English using Gemini 2.5 Flash.
