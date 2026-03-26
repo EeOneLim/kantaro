@@ -331,52 +331,50 @@ export default function Home() {
         {!isLanding && (
           <div className="space-y-4">
             {/*
-             * TOP ROW
+             * TOP ROW — only rendered once the user has selected a video.
+             * Before that, we go straight to the results grid so the search
+             * results appear at the top without a placeholder player frame.
+             *
              * Mobile:  player stacked above subtitle panel (natural block flow)
              * Desktop: player (3/4) left | subtitle panel (1/4) right — same height
              * AC-6.1, AC-6.2
              */}
-            <div
-              className="lg:flex lg:gap-4 lg:items-stretch"
-              ref={playerContainerRef}
-            >
-              {/* Player — 3/4 width on desktop */}
-              <div className="lg:w-3/4 mb-3 lg:mb-0">
-                {selectedVideo ? (
+            {selectedVideo && (
+              <div
+                className="lg:flex lg:gap-4 lg:items-stretch"
+                ref={playerContainerRef}
+              >
+                {/* Player — 3/4 width on desktop */}
+                <div className="lg:w-3/4 mb-3 lg:mb-0">
                   <Player
                     videoId={selectedVideo.id}
                     onPlayerReady={handlePlayerReady}
                     onPlayerStateChange={handlePlayerStateChange}
                   />
-                ) : (
-                  // Placeholder before the user picks a video
-                  <div className="w-full aspect-video rounded-lg bg-surface border border-border flex items-center justify-center text-muted text-sm">
-                    Select a video to play
+                </div>
+
+                {/* Subtitle panel — 1/4 width on desktop, same height as player
+                    Hidden entirely on both mobile and desktop if no video selected (AC-6.3/6.4) */}
+                {showSubtitlePanel && (
+                  /*
+                   * Desktop height trick: the column is `relative` and stretches to
+                   * match the player via `items-stretch`. The inner absolute wrapper
+                   * fills it exactly (inset-0), giving SubtitlePanel a locked container
+                   * height so `overflow-y-auto` actually constrains the scroll area.
+                   */
+                  <div className="lg:w-1/4 lg:relative">
+                    <div className="lg:absolute lg:inset-0">
+                      <SubtitlePanel
+                        cues={lyrics}
+                        activeCueIndex={activeCueIndex}
+                        isLoading={lyricsLoading}
+                        error={lyricsError}
+                      />
+                    </div>
                   </div>
                 )}
               </div>
-
-              {/* Subtitle panel — 1/4 width on desktop, same height as player
-                  Hidden entirely on both mobile and desktop if no video selected (AC-6.3/6.4) */}
-              {showSubtitlePanel && (
-                /*
-                 * Desktop height trick: the column is `relative` and stretches to
-                 * match the player via `items-stretch`. The inner absolute wrapper
-                 * fills it exactly (inset-0), giving SubtitlePanel a locked container
-                 * height so `overflow-y-auto` actually constrains the scroll area.
-                 */
-                <div className="lg:w-1/4 lg:relative">
-                  <div className="lg:absolute lg:inset-0">
-                    <SubtitlePanel
-                      cues={lyrics}
-                      activeCueIndex={activeCueIndex}
-                      isLoading={lyricsLoading}
-                      error={lyricsError}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
+            )}
 
             {/* BOTTOM ROW — full-width results grid (AC-6.2) */}
             <div>
