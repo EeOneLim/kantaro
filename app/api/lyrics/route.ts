@@ -37,6 +37,11 @@ export async function GET(request: NextRequest) {
       spanishCues = await fetchFromLRCLib(videoId);
     }
 
+    if (!spanishCues) {
+      console.log(`[/api/lyrics] LRCLib failed for ${videoId}, trying Genius`);
+      spanishCues = await fetchFromGenius(videoId);
+    }
+
     if (!spanishCues || spanishCues.length < 3) {
       return NextResponse.json({ error: "no_captions" }, { status: 404 });
     }
@@ -149,16 +154,23 @@ async function fetchFromLRCLib(
     // Step 2: Parse "Artist - Track Title (Official Video)" into parts.
     // Music videos almost universally use " - " as the separator.
     const { artist, track } = parseMusicTitle(rawTitle, channelName);
+    console.log(`[/api/lyrics] LRCLib: parsed title="${rawTitle}" → artist="${artist}" track="${track}"`);
 
     // Step 3: Query LRCLib. Try structured search first (more precise),
     // fall back to a plain query string if we couldn't parse artist/track.
     let lrcResult = null;
     if (artist && track) {
       lrcResult = await lrclibSearch({ track_name: track, artist_name: artist });
+      if (!lrcResult) {
+        console.log(`[/api/lyrics] LRCLib: structured search (artist="${artist}", track="${track}") returned no synced lyrics`);
+      }
     }
     if (!lrcResult) {
       // Fallback: send the full raw title as a general query
       lrcResult = await lrclibSearch({ q: rawTitle });
+      if (!lrcResult) {
+        console.log(`[/api/lyrics] LRCLib: full-text search (q="${rawTitle}") returned no synced lyrics`);
+      }
     }
     if (!lrcResult) return null;
 
@@ -230,13 +242,18 @@ async function lrclibSearch(params: {
   if (!res.ok) return null;
 
   const results = await res.json();
-  if (!Array.isArray(results) || results.length === 0) return null;
+  if (!Array.isArray(results) || results.length === 0) {
+    console.log(`[/api/lyrics] LRCLib: API returned 0 results for params=${JSON.stringify(params)}`);
+    return null;
+  }
 
   // Pick the first result that has synced (timestamped) lyrics
   const synced = results.find(
     (r: { syncedLyrics?: string | null }) =>
       r.syncedLyrics && r.syncedLyrics.trim().length > 0
   );
+  const syncedCount = results.filter((r: { syncedLyrics?: string | null }) => r.syncedLyrics).length;
+  console.log(`[/api/lyrics] LRCLib: ${results.length} results, ${syncedCount} with synced lyrics`);
   return synced?.syncedLyrics ?? null;
 }
 
@@ -270,6 +287,183 @@ function parseLRC(
     end: trimmed[i + 1]?.start ?? c.start + 5, // 5s for the last line
     spanish: c.text,
   }));
+}
+
+// --- Source 3: Genius + Gemini timestamp estimation ---
+
+// Genius has near-universal lyrics coverage but no timestamps.
+// We fetch the plain lyrics, then ask Gemini to estimate when each line
+// occurs based on song structure (intro length, verse/chorus pacing, duration).
+// Accuracy is ±5–15s — good enough to keep the active cue in the right section.
+async function fetchFromGenius(
+  videoId: string
+): Promise<Array<{ start: number; end: number; spanish: string }> | null> {
+  const geniusKey = process.env.GENIUS_API_KEY;
+  if (!geniusKey || geniusKey.startsWith("your_")) {
+    console.warn("[/api/lyrics] GENIUS_API_KEY not configured — skipping Genius fallback");
+    return null;
+  }
+
+  try {
+    // Step 1: Get title + channel via oEmbed (free, no key)
+    const oembedRes = await fetch(
+      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
+    );
+    if (!oembedRes.ok) return null;
+    const oembedData = await oembedRes.json();
+    const rawTitle: string = oembedData.title ?? "";
+    const channelName: string = oembedData.author_name ?? "";
+
+    const { artist, track } = parseMusicTitle(rawTitle, channelName);
+    console.log(`[/api/lyrics] Genius: searching artist="${artist}" track="${track}"`);
+
+    // Step 2: Get video duration from YouTube Data API (needed for timestamp estimation)
+    const ytKey = process.env.YOUTUBE_API_KEY;
+    let durationSecs = 210; // sensible default (3.5 min) if API call fails
+    if (ytKey) {
+      const durRes = await fetch(
+        `https://www.googleapis.com/youtube/v3/videos?id=${videoId}&part=contentDetails&key=${ytKey}`
+      );
+      if (durRes.ok) {
+        const durData = await durRes.json();
+        const iso = durData.items?.[0]?.contentDetails?.duration ?? "";
+        if (iso) durationSecs = parseIsoDuration(iso);
+      }
+    }
+
+    // Step 3: Search Genius for the song
+    const query = encodeURIComponent(`${artist} ${track}`);
+    const searchRes = await fetch(`https://api.genius.com/search?q=${query}`, {
+      headers: { Authorization: `Bearer ${geniusKey}` },
+    });
+    if (!searchRes.ok) return null;
+    const searchData = await searchRes.json();
+    const hits: Array<{ result: { url: string; primary_artist: { name: string }; title: string } }> =
+      searchData.response?.hits ?? [];
+    if (hits.length === 0) {
+      console.log(`[/api/lyrics] Genius: no results for "${artist} ${track}"`);
+      return null;
+    }
+    const lyricsUrl = hits[0].result.url;
+
+    // Step 4: Scrape lyrics from the Genius page HTML
+    const pageRes = await fetch(lyricsUrl, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; Kantaro/1.0)" },
+    });
+    if (!pageRes.ok) return null;
+    const html = await pageRes.text();
+
+    // Genius wraps lyrics in <div data-lyrics-container="true"> blocks.
+    // We extract all such blocks and strip HTML tags to get plain text.
+    const containerMatches = html.match(/data-lyrics-container="true"[^>]*>([\s\S]*?)<\/div>/g) ?? [];
+    if (containerMatches.length === 0) {
+      console.log(`[/api/lyrics] Genius: could not find lyrics container in page HTML`);
+      return null;
+    }
+
+    const rawText = containerMatches
+      .join("\n")
+      .replace(/<br\s*\/?>/gi, "\n")   // <br> → newline before stripping tags
+      .replace(/<[^>]+>/g, "")         // strip all remaining HTML tags
+      .replace(/&amp;/g, "&")
+      .replace(/&quot;/g, '"')
+      .replace(/&#x27;/g, "'")
+      .replace(/&apos;/g, "'");
+
+    // Filter out blank lines and section headers like [Verso 1], [Coro]
+    const lines = rawText
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length >= 2 && !/^\[.*\]$/.test(l));
+
+    if (lines.length < 3) {
+      console.log(`[/api/lyrics] Genius: too few lyric lines (${lines.length})`);
+      return null;
+    }
+
+    const trimmedLines = lines.slice(0, MAX_CUES);
+    console.log(`[/api/lyrics] Genius: ${trimmedLines.length} lines scraped, estimating timestamps (duration=${durationSecs}s)`);
+
+    // Step 5: Ask Gemini to estimate a timestamp for each lyric line
+    const timestamps = await estimateTimestampsWithGemini(trimmedLines, artist, track, durationSecs);
+    if (!timestamps) return null;
+
+    const cues = trimmedLines.map((text, i) => ({
+      start: timestamps[i],
+      end: timestamps[i + 1] ?? timestamps[i] + 5,
+      spanish: text,
+    }));
+
+    console.log(`[/api/lyrics] source: genius+gemini-timestamps — "${artist}" / "${track}" (${cues.length} cues, estimated sync)`);
+    return cues;
+  } catch (err) {
+    console.warn("[/api/lyrics] Genius fetch failed:", err);
+    return null;
+  }
+}
+
+// Ask Gemini to estimate a start timestamp (in seconds) for each lyric line.
+// Gemini reasons about typical song structure: intro length, verse/chorus pacing,
+// outro. Not perfectly accurate but keeps the active cue in the right section.
+async function estimateTimestampsWithGemini(
+  lines: string[],
+  artist: string,
+  track: string,
+  durationSecs: number
+): Promise<number[] | null> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey.startsWith("your_")) return null;
+
+  try {
+    const genai = new GoogleGenerativeAI(apiKey);
+    const model = genai.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+
+    const prompt = `You are estimating playback timestamps for song lyrics.
+
+Song: "${artist}" — "${track}"
+Total duration: ${durationSecs} seconds
+Number of lyric lines: ${lines.length}
+
+Estimate the start time in seconds for each lyric line based on typical song structure
+(intro, verse, chorus, bridge, outro pacing). Return ONLY a valid JSON array of
+${lines.length} numbers in ascending order, between 0 and ${durationSecs}.
+First lyric typically begins 8–25 seconds in. Leave the last 5–10 seconds for outro.
+Do not include markdown, code blocks, or explanation — just the JSON array.
+
+Lyrics:
+${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`;
+
+    const result = await model.generateContent(prompt);
+    const raw = result.response.text().trim()
+      .replace(/^```(?:json)?\n?/, "")
+      .replace(/\n?```$/, "")
+      .trim();
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length !== lines.length) {
+      console.warn(`[/api/lyrics] Gemini timestamp estimation returned wrong length: got ${parsed.length}, expected ${lines.length}`);
+      return null;
+    }
+
+    // Ensure timestamps are numbers, ascending, and within bounds
+    const clamped = (parsed as number[]).map((t, i) => {
+      const prev = i > 0 ? clamped[i - 1] : 0;
+      return Math.max(prev, Math.min(Number(t) || prev + 3, durationSecs));
+    });
+    return clamped;
+  } catch (err) {
+    console.warn("[/api/lyrics] Gemini timestamp estimation failed:", err);
+    return null;
+  }
+}
+
+// Parse an ISO 8601 duration string (e.g. "PT3M45S") into total seconds.
+function parseIsoDuration(iso: string): number {
+  const m = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!m) return 0;
+  return (parseInt(m[1] || "0") * 3600) +
+         (parseInt(m[2] || "0") * 60) +
+         parseInt(m[3] || "0");
 }
 
 // --- Translation ---
