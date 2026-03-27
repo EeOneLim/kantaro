@@ -446,10 +446,11 @@ ${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`;
     }
 
     // Ensure timestamps are numbers, ascending, and within bounds
-    const clamped = (parsed as number[]).map((t, i) => {
+    const clamped: number[] = [];
+    for (const [i, t] of (parsed as number[]).entries()) {
       const prev = i > 0 ? clamped[i - 1] : 0;
-      return Math.max(prev, Math.min(Number(t) || prev + 3, durationSecs));
-    });
+      clamped.push(Math.max(prev, Math.min(Number(t) || prev + 3, durationSecs)));
+    }
     return clamped;
   } catch (err) {
     console.warn("[/api/lyrics] Gemini timestamp estimation failed:", err);
