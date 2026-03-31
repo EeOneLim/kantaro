@@ -31,6 +31,9 @@ export async function GET(request: NextRequest) {
     // Searching "Bad Bunny" still works; searching "happy songs" leans Spanish.
     relevanceLanguage: "es",
     key: apiKey,
+    // Only include videos that can be embedded — filters out Vevo/label-blocked content.
+    // Only valid when type=video; ignored for channel searches.
+    ...(type === "video" && { videoEmbeddable: "true" }),
   });
 
   const response = await fetch(
