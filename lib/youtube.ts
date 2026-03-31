@@ -4,6 +4,18 @@ import { YouTubeVideo, YouTubeChannel } from "@/types";
 // These functions extract only what we need, keeping the rest of the app
 // insulated from API response shape changes.
 
+// Detects compilation/mix-style video titles — these videos are filtered out
+// sitewide because lyrics services rarely have data for them, making them
+// useless for language learning. Word boundaries (\b) prevent false positives
+// on normal song titles that happen to contain these substrings
+// (e.g. "Best Of Times" does not match "best of").
+const COMPILATION_PATTERN =
+  /\b(mix|playlist|compilation|megamix|nonstop|non[- ]stop|mashup|medley|mixtape|best of|top \d+|top songs|top hits|greatest hits|all songs|full album|collection|vol\.|volume|part \d|pt\.?\s*\d|\d+\s*songs|\d+\s*(hour|hr)s?|hours? of|lo mejor|grandes\s+[eé]xitos|recopilaci[oó]n|music party|latin party|latino party)\b/i;
+
+export function isCompilationVideo(title: string): boolean {
+  return COMPILATION_PATTERN.test(title);
+}
+
 export function parseSearchResults(items: YouTubeSearchItem[]): YouTubeVideo[] {
   return items
     .filter((item) => item.id?.videoId) // exclude playlists/channels from results

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { YouTubeVideo, YouTubeChannel, LyricCue } from "@/types";
+import { isCompilationVideo } from "@/lib/youtube";
 import SearchBar from "@/components/SearchBar";
 import VideoGrid from "@/components/VideoGrid";
 import Player, { YouTubePlayerInstance } from "@/components/Player";
@@ -144,7 +145,11 @@ export default function Home() {
       const res = await fetch("/api/search?q=música+latina+popular");
       if (res.ok) {
         const data = await res.json();
-        setPopularVideos(data.videos ?? []);
+        // Filter out compilations — lyrics services rarely have data for them
+        const videos = (data.videos ?? []).filter(
+          (v: YouTubeVideo) => !isCompilationVideo(v.title)
+        );
+        setPopularVideos(videos);
       }
     } catch {
       // Non-critical — the popular grid just won't render
@@ -194,11 +199,29 @@ export default function Home() {
     setAppState("search");
     // Per PRD: player keeps playing when a new search runs — don't clear selectedVideo
 
+    // Strip compilation keywords from the query before hitting YouTube.
+    // e.g. "bad bunny mix" → "bad bunny" so YouTube returns songs, not mixes.
+    // We keep q (the original) in state so the search bar still shows what the user typed.
+    const cleanedQuery = q
+      .replace(
+        /\b(mix|playlist|compilation|megamix|nonstop|non[- ]stop|mashup|medley|mixtape|best of|top songs|top hits|greatest hits|all songs|full album|collection|vol\.|volume|lo mejor|grandes\s+[eé]xitos|recopilaci[oó]n|music party|latin party|latino party)\b/gi,
+        ""
+      )
+      .replace(/\s+/g, " ")
+      .trim();
+    // Fall back to the original query if stripping removed everything (e.g. user typed just "mix")
+    const queryToSend = cleanedQuery || q;
+
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+      const res = await fetch(`/api/search?q=${encodeURIComponent(queryToSend)}`);
       if (!res.ok) throw new Error("Search failed");
       const data = await res.json();
-      setVideos(data.videos ?? []);
+      // Filter compilations sitewide — they have no lyrics data and are not
+      // useful for language learning regardless of what the user searched for.
+      const videos = (data.videos ?? []).filter(
+        (v: YouTubeVideo) => !isCompilationVideo(v.title)
+      );
+      setVideos(videos);
     } catch {
       setError("Something went wrong. Please try again.");
     } finally {
@@ -216,7 +239,11 @@ export default function Home() {
       const res = await fetch(`/api/channels/${channel.id}`);
       if (!res.ok) throw new Error("Failed to load channel");
       const data = await res.json();
-      setVideos(data.videos ?? []);
+      // Filter out compilations from channel views too
+      const videos = (data.videos ?? []).filter(
+        (v: YouTubeVideo) => !isCompilationVideo(v.title)
+      );
+      setVideos(videos);
     } catch {
       setError("Failed to load channel. Please try again.");
     } finally {
