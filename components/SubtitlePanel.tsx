@@ -48,8 +48,8 @@ export default function SubtitlePanel({
   if (isLoading) {
     return (
       <div className={`${shell} items-center justify-center`}>
-        <span className="text-4xl animate-mic-pulse" style={{ color: "var(--color-accent)" }}>
-          🎤
+        <span className="text-sm animate-mic-pulse" style={{ color: "var(--color-accent)" }}>
+          Loading lyrics
         </span>
       </div>
     );
