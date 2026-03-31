@@ -22,6 +22,8 @@ export async function GET(
     type: "video",
     maxResults: "12",
     order: "date",
+    // Only include videos that can be embedded — filters out Vevo/label-blocked content.
+    videoEmbeddable: "true",
     key: apiKey,
   });
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import YouTube, { YouTubeProps, YouTubeEvent } from "react-youtube";
 
 // Minimal interface for the parts of the YouTube IFrame player we actually use.
@@ -27,6 +28,17 @@ export default function Player({
   onPlayerReady,
   onPlayerStateChange,
 }: PlayerProps) {
+  // IFrame API error codes 101 and 150 mean the rights holder has blocked
+  // embedding on third-party sites (e.g. NFL, Vevo). We can't suppress YouTube's
+  // own error UI inside the iframe, so we overlay our own message on top.
+  const [embedBlocked, setEmbedBlocked] = useState(false);
+
+  // Reset blocked state whenever the video changes — onReady only fires once
+  // on initial mount, so we can't rely on it to clear stale error state.
+  useEffect(() => {
+    setEmbedBlocked(false);
+  }, [videoId]);
+
   const opts: YouTubeProps["opts"] = {
     width: "100%",
     height: "100%",
@@ -38,11 +50,20 @@ export default function Player({
   };
 
   function handleReady(event: YouTubeEvent) {
+    // Clear any previous embed-blocked state when a new video loads successfully
+    setEmbedBlocked(false);
     onPlayerReady?.(event.target as YouTubePlayerInstance);
   }
 
   function handleStateChange(event: YouTubeEvent<number>) {
     onPlayerStateChange?.(event.data);
+  }
+
+  function handleError(event: YouTubeEvent<number>) {
+    // 101 / 150: owner does not allow embedding on third-party sites
+    if (event.data === 101 || event.data === 150) {
+      setEmbedBlocked(true);
+    }
   }
 
   return (
@@ -53,9 +74,32 @@ export default function Player({
         opts={opts}
         onReady={handleReady}
         onStateChange={handleStateChange}
+        onError={handleError}
         className="absolute inset-0 w-full h-full"
         iframeClassName="w-full h-full"
       />
+
+      {/* Overlay that appears when the rights holder blocks third-party embedding.
+          Sits above the iframe so the broken YouTube error UI is hidden. */}
+      {embedBlocked && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0a0a0a] gap-3 p-6 text-center">
+          <span className="text-3xl">🔒</span>
+          <p className="text-[#e5e5e5] font-medium">
+            This video only shows up at its home on YouTube.
+          </p>
+          <p className="text-[#a3a3a3] text-sm">
+            (We tried. It said no.)
+          </p>
+          <a
+            href={`https://www.youtube.com/watch?v=${videoId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 px-4 py-2 rounded-md bg-[#f59e0b] text-black text-sm font-semibold hover:bg-[#d97706] transition-colors"
+          >
+            Watch on YouTube
+          </a>
+        </div>
+      )}
     </div>
   );
 }
