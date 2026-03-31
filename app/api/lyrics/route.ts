@@ -415,9 +415,6 @@ async function estimateTimestampsWithGemini(
   if (!apiKey || apiKey.startsWith("your_")) return null;
 
   try {
-    const genai = new GoogleGenerativeAI(apiKey);
-    const model = genai.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
-
     const prompt = `You are estimating playback timestamps for song lyrics.
 
 Song: "${artist}" — "${track}"
@@ -433,8 +430,7 @@ Do not include markdown, code blocks, or explanation — just the JSON array.
 Lyrics:
 ${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`;
 
-    const result = await model.generateContent(prompt);
-    const raw = result.response.text().trim()
+    const raw = (await callGeminiWithFallback(apiKey, prompt)).trim()
       .replace(/^```(?:json)?\n?/, "")
       .replace(/\n?```$/, "")
       .trim();
@@ -484,16 +480,40 @@ async function translateInChunks(lines: string[]): Promise<string[]> {
 }
 
 // Translate one chunk of Spanish lyric lines to English using Gemini 2.5 Flash.
+// Model fallback chain — tries each in order, moves to the next on any error.
+// gemini-2.5-flash-lite is the cheapest/fastest but prone to 503s under high demand;
+// the older models have more stable capacity at the cost of slightly higher latency.
+const GEMINI_MODELS = [
+  "gemini-2.5-flash-lite",
+  "gemini-2.0-flash-lite",
+  "gemini-1.5-flash-lite-001",
+];
+
+async function callGeminiWithFallback(apiKey: string, prompt: string): Promise<string> {
+  let lastError: unknown;
+  for (const modelName of GEMINI_MODELS) {
+    try {
+      const genai = new GoogleGenerativeAI(apiKey);
+      const model = genai.getGenerativeModel({ model: modelName });
+      const result = await model.generateContent(prompt);
+      if (modelName !== GEMINI_MODELS[0]) {
+        console.log(`[/api/lyrics] Used fallback model: ${modelName}`);
+      }
+      return result.response.text();
+    } catch (err) {
+      console.warn(`[/api/lyrics] Model ${modelName} failed, trying next:`, (err as Error).message);
+      lastError = err;
+    }
+  }
+  throw lastError;
+}
+
 async function translateWithGemini(lines: string[]): Promise<string[]> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey.startsWith("your_")) {
     console.warn("[lyrics] GEMINI_API_KEY not configured — skipping translation");
     return lines.map(() => "");
   }
-
-  const genai = new GoogleGenerativeAI(apiKey);
-  // gemini-2.5-flash-lite: fast, higher free-tier quota than gemini-2.5-flash, great for bulk translation
-  const model = genai.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
 
   const prompt = `You are translating Spanish song lyrics to English.
 Translate each numbered line with musical and poetic intent — natural and flowing, not word-for-word literal.
@@ -504,8 +524,7 @@ Do not include any markdown, code blocks, or explanation.
 Spanish lines:
 ${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`;
 
-  const result = await model.generateContent(prompt);
-  const raw = result.response.text().trim();
+  const raw = (await callGeminiWithFallback(apiKey, prompt)).trim();
 
   // Strip markdown code fences if Gemini wraps its response anyway
   const cleaned = raw
