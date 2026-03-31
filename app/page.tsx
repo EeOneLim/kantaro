@@ -7,6 +7,7 @@ import SearchBar from "@/components/SearchBar";
 import VideoGrid from "@/components/VideoGrid";
 import Player, { YouTubePlayerInstance } from "@/components/Player";
 import SubtitlePanel from "@/components/SubtitlePanel";
+import MiniPlayerControls from "@/components/MiniPlayerControls";
 import ChannelRow from "@/components/ChannelRow";
 import Hero from "@/components/Hero";
 import SectionLabel from "@/components/SectionLabel";
@@ -29,6 +30,9 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [popularLoading, setPopularLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // True when a video is playing but the user navigated away (search / channel browse).
+  // The player floats as a corner box; CSS-only repositioning avoids iframe remount.
+  const [isMinimized, setIsMinimized] = useState(false);
 
   // ── Phase 2: lyrics + sync state ───────────────────────────────────────────
   const [lyrics, setLyrics] = useState<LyricCue[]>([]);
@@ -198,6 +202,8 @@ export default function Home() {
     setError(null);
     setAppState("search");
     // Per PRD: player keeps playing when a new search runs — don't clear selectedVideo
+    // If a video is already playing, minimize it to the corner so results fill the screen
+    if (selectedVideo) setIsMinimized(true);
 
     // Strip compilation keywords from the query before hitting YouTube.
     // e.g. "bad bunny mix" → "bad bunny" so YouTube returns songs, not mixes.
@@ -234,6 +240,8 @@ export default function Home() {
     setIsLoading(true);
     setError(null);
     setAppState("channel");
+    // Minimize any playing video so the channel grid fills the screen
+    if (selectedVideo) setIsMinimized(true);
 
     try {
       const res = await fetch(`/api/channels/${channel.id}`);
@@ -256,6 +264,8 @@ export default function Home() {
     stopSync();
     setActiveCueIndex(-1);
     setSelectedVideo(video);
+    // Always expand to the full layout when a video is selected
+    setIsMinimized(false);
 
     // AC-1.2: Lyrics fetch begins immediately on video selection
     fetchLyrics(video.id);
@@ -275,8 +285,24 @@ export default function Home() {
     setActiveChannel(null);
     setVideos([]);
     setSelectedVideo(null);
+    setIsMinimized(false);
     setQuery("");
     setError(null);
+    setLyrics([]);
+    setLyricsError(null);
+    setActiveCueIndex(-1);
+  }
+
+  // Expand the miniplayer back to the full top-row layout
+  function handleExpandPlayer() {
+    setIsMinimized(false);
+  }
+
+  // Close the miniplayer — stops video and clears all associated state
+  function handleClosePlayer() {
+    stopSync();
+    setSelectedVideo(null);
+    setIsMinimized(false);
     setLyrics([]);
     setLyricsError(null);
     setActiveCueIndex(-1);
@@ -367,12 +393,30 @@ export default function Home() {
              * AC-6.1, AC-6.2
              */}
             {selectedVideo && (
+              /*
+               * CSS-only repositioning — the <Player> always lives here in the tree.
+               * When minimized we swap the wrapper to `fixed bottom-4 right-4` classes;
+               * when normal we use the standard flex layout. No unmount = no iframe
+               * remount = video never restarts. (AC-M8)
+               */
               <div
-                className="lg:flex lg:gap-4 lg:items-stretch"
-                ref={playerContainerRef}
+                className={
+                  isMinimized
+                    ? "fixed bottom-4 right-4 w-56 lg:w-72 z-50 rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/10"
+                    : "lg:flex lg:gap-4 lg:items-stretch"
+                }
+                ref={isMinimized ? undefined : playerContainerRef}
               >
-                {/* Player — 3/4 width on desktop */}
-                <div className="lg:w-3/4 mb-3 lg:mb-0">
+                {/* Expand / close overlay — only visible when minimized */}
+                {isMinimized && (
+                  <MiniPlayerControls
+                    onExpand={handleExpandPlayer}
+                    onClose={handleClosePlayer}
+                  />
+                )}
+
+                {/* Player — 3/4 width on desktop in normal mode; full-width when minimized */}
+                <div className={isMinimized ? "w-full" : "lg:w-3/4 mb-3 lg:mb-0"}>
                   <Player
                     videoId={selectedVideo.id}
                     onPlayerReady={handlePlayerReady}
@@ -380,9 +424,10 @@ export default function Home() {
                   />
                 </div>
 
-                {/* Subtitle panel — 1/4 width on desktop, same height as player
-                    Hidden entirely on both mobile and desktop if no video selected (AC-6.3/6.4) */}
-                {showSubtitlePanel && (
+                {/* Subtitle panel — 1/4 width on desktop, same height as player.
+                    Hidden when minimized (panel stays in sync via polling regardless).
+                    AC-6.3/6.4, AC-M7 */}
+                {!isMinimized && showSubtitlePanel && (
                   /*
                    * Desktop height trick: the column is `relative` and stretches to
                    * match the player via `items-stretch`. The inner absolute wrapper
