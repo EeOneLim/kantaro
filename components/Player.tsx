@@ -82,19 +82,19 @@ export default function Player({
       {/* Overlay that appears when the rights holder blocks third-party embedding.
           Sits above the iframe so the broken YouTube error UI is hidden. */}
       {embedBlocked && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0a0a0a] gap-3 p-6 text-center">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-background gap-3 p-6 text-center">
           <span className="text-3xl">🔒</span>
-          <p className="text-[#e5e5e5] font-medium">
+          <p className="text-foreground font-medium">
             This video only shows up at its home on YouTube.
           </p>
-          <p className="text-[#a3a3a3] text-sm">
+          <p className="text-muted text-sm">
             (We tried. It said no.)
           </p>
           <a
             href={`https://www.youtube.com/watch?v=${videoId}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-1 px-4 py-2 rounded-md bg-[#f59e0b] text-black text-sm font-semibold hover:bg-[#d97706] transition-colors"
+            className="mt-1 px-4 py-2 rounded-full bg-accent text-background text-sm font-semibold hover:bg-accent-hover transition-colors"
           >
             Watch on YouTube
           </a>
