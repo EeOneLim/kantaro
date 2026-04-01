@@ -6,18 +6,18 @@
   which means you can use them as utility classes (e.g. bg-background, text-accent).
 */
 @theme inline {
-  /* Colors */
-  --color-background: #0a0a0a;
-  --color-surface: #141414;      /* slightly lighter dark, for cards */
-  --color-border: #2a2a2a;       /* subtle border color */
-  --color-foreground: #e5e5e5;   /* off-white — avoid pure white on dark */
-  --color-muted: #888888;        /* secondary text, timestamps, metadata */
-  --color-accent: #f59e0b;       /* warm amber — primary interactive color */
-  --color-accent-hover: #fbbf24; /* lighter amber for hover states */
+  /* Colors — Redstream Pro */
+  --color-background: #f9f9f9;
+  --color-surface: #ffffff;      /* white card surfaces */
+  --color-border: #e2e2e2;       /* light gray border */
+  --color-foreground: #1a1c1c;   /* near-black text */
+  --color-muted: #603e39;        /* muted/secondary text */
+  --color-accent: #bc0100;       /* red primary */
+  --color-accent-hover: #eb0000; /* brighter red for hover */
 
-  /* Fonts — CSS variables injected by next/font */
-  --font-heading: var(--font-sora);
-  --font-body: var(--font-dm-sans);
+  /* Fonts — Inter (Redstream Pro) */
+  --font-heading: var(--font-inter);
+  --font-body: var(--font-inter);
 
   /* Animation: search results fade in from slightly below */
   --animate-fade-in: fadeIn 200ms ease both;
@@ -55,5 +55,5 @@
 body {
   background: var(--color-background);
   color: var(--color-foreground);
-  font-family: var(--font-dm-sans), system-ui, sans-serif;
+  font-family: var(--font-inter), system-ui, sans-serif;
 }

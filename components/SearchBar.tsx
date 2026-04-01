@@ -37,12 +37,12 @@ export default function SearchBar({
         onChange={(e) => setValue(e.target.value)}
         placeholder={placeholder}
         aria-label="Search songs or artists"
-        className="flex-1 bg-surface text-foreground placeholder:text-muted rounded-xl px-4 py-3 text-base outline-none border border-border focus:border-accent transition-colors duration-200"
+        className="flex-1 bg-surface text-foreground placeholder:text-muted rounded-full px-4 py-3 text-base outline-none border border-border focus:border-accent transition-colors duration-200"
       />
       <button
         type="submit"
         aria-label="Search"
-        className="bg-accent text-background font-semibold px-5 py-3 rounded-xl hover:bg-accent-hover transition-colors duration-200 whitespace-nowrap"
+        className="bg-accent text-background font-semibold px-5 py-3 rounded-full hover:bg-accent-hover transition-colors duration-200 whitespace-nowrap"
       >
         Search
       </button>

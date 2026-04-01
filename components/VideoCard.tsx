@@ -15,12 +15,12 @@ export default function VideoCard({ video, isSelected, onClick }: VideoCardProps
       onClick={onClick}
       aria-label={`Play ${video.title}`}
       className={`
-        group w-full text-left rounded-[10px] overflow-hidden border
+        group w-full text-left rounded-xl overflow-hidden border
         bg-surface transition-all duration-150
         ${
           isSelected
             ? "border-accent shadow-[0_0_0_2px_var(--color-accent)]"
-            : "border-border hover:border-accent/50 hover:scale-[1.02] hover:shadow-[0_4px_20px_rgba(245,158,11,0.12)]"
+            : "border-border hover:border-accent/50 hover:scale-[1.02] hover:shadow-[0_4px_20px_rgba(188,1,0,0.12)]"
         }
       `}
     >
