@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { parseSearchResults, parseChannelResults } from "@/lib/youtube";
+import { parseSearchResults, parseChannelResults, youtubeApiFetch } from "@/lib/youtube";
 
 // Secure proxy between the browser and YouTube's API.
 // The API key never leaves the server — the browser only calls /api/search.
@@ -16,29 +16,24 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Missing query parameter" }, { status: 400 });
   }
 
-  const apiKey = process.env.YOUTUBE_API_KEY;
-  if (!apiKey) {
+  if (!process.env.YOUTUBE_API_KEY) {
     console.error("YOUTUBE_API_KEY is not set");
     return NextResponse.json({ error: "Server configuration error" }, { status: 500 });
   }
 
-  const params = new URLSearchParams({
-    part: "snippet",
-    q: query,
-    type,
-    maxResults: "12",
-    // Bias results toward Spanish-language content without hard-restricting.
-    // Searching "Bad Bunny" still works; searching "happy songs" leans Spanish.
-    relevanceLanguage: "es",
-    key: apiKey,
-    // Only include videos that can be embedded — filters out Vevo/label-blocked content.
-    // Only valid when type=video; ignored for channel searches.
-    ...(type === "video" && { videoEmbeddable: "true" }),
-  });
+  const url = new URL("https://www.googleapis.com/youtube/v3/search");
+  url.searchParams.set("part", "snippet");
+  url.searchParams.set("q", query);
+  url.searchParams.set("type", type);
+  url.searchParams.set("maxResults", "12");
+  // Bias results toward Spanish-language content without hard-restricting.
+  // Searching "Bad Bunny" still works; searching "happy songs" leans Spanish.
+  url.searchParams.set("relevanceLanguage", "es");
+  // Only include videos that can be embedded — filters out Vevo/label-blocked content.
+  // Only valid when type=video; ignored for channel searches.
+  if (type === "video") url.searchParams.set("videoEmbeddable", "true");
 
-  const response = await fetch(
-    `https://www.googleapis.com/youtube/v3/search?${params}`
-  );
+  const response = await youtubeApiFetch(url);
 
   if (!response.ok) {
     return NextResponse.json({ error: "YouTube API error" }, { status: response.status });
