@@ -174,8 +174,36 @@ async function fetchFromLRCLib(
     }
     if (!lrcResult) return null;
 
-    // Step 4: Parse LRC timestamp lines into cues
-    const cues = parseLRC(lrcResult);
+    // Step 4: Compute intro offset by comparing YouTube video duration against
+    // the official track duration from LRCLib. Music videos often have branding
+    // or cinematic intros before the song begins; that gap equals the offset we
+    // need to shift all LRCLib timestamps forward.
+    // Only apply if 0 < diff < 60s — outside that range it's more likely a
+    // different edit, live version, or outro mismatch, and shifting would make
+    // things worse rather than better (AC-F2.3, AC-F2.4).
+    let introOffset = 0;
+    const lrclibDuration = lrcResult.duration;
+    if (lrclibDuration !== null) {
+      const ytKey = process.env.YOUTUBE_API_KEY;
+      const youtubeDuration = ytKey ? await fetchYoutubeDuration(videoId, ytKey) : null;
+      if (youtubeDuration !== null) {
+        const diff = youtubeDuration - lrclibDuration;
+        if (diff > 0 && diff < 60) {
+          introOffset = diff;
+          console.log(
+            `[/api/lyrics] LRCLib: applying intro offset ${introOffset.toFixed(1)}s` +
+            ` (youtube=${youtubeDuration}s, track=${lrclibDuration}s)`
+          );
+        } else {
+          console.log(
+            `[/api/lyrics] LRCLib: offset diff ${diff.toFixed(1)}s out of safe range — not applying`
+          );
+        }
+      }
+    }
+
+    // Step 5: Parse LRC timestamp lines into cues, applying the intro offset
+    const cues = parseLRC(lrcResult.syncedLyrics, introOffset);
     if (!cues || cues.length < 3) return null;
 
     console.log(
@@ -224,13 +252,13 @@ function parseMusicTitle(
   return { artist: channelName, track: cleanTrack(title) };
 }
 
-// Hit the LRCLib search API. Returns the syncedLyrics string from the best
-// match, or null if no synced result is found.
+// Hit the LRCLib search API. Returns the syncedLyrics string and track
+// duration (seconds) from the best match, or null if no synced result is found.
 async function lrclibSearch(params: {
   track_name?: string;
   artist_name?: string;
   q?: string;
-}): Promise<string | null> {
+}): Promise<{ syncedLyrics: string; duration: number | null } | null> {
   const qs = new URLSearchParams();
   if (params.track_name) qs.set("track_name", params.track_name);
   if (params.artist_name) qs.set("artist_name", params.artist_name);
@@ -254,28 +282,56 @@ async function lrclibSearch(params: {
   );
   const syncedCount = results.filter((r: { syncedLyrics?: string | null }) => r.syncedLyrics).length;
   console.log(`[/api/lyrics] LRCLib: ${results.length} results, ${syncedCount} with synced lyrics`);
-  return synced?.syncedLyrics ?? null;
+  if (!synced) return null;
+  return {
+    syncedLyrics: synced.syncedLyrics,
+    // LRCLib returns duration in seconds; may be absent on some entries
+    duration: typeof synced.duration === "number" ? synced.duration : null,
+  };
 }
 
 // Parse an LRC string into normalised cues.
 // LRC line format: [mm:ss.xx]lyric text
 // Instrumental/blank lines (e.g. "[01:23.45]") are skipped.
+//
+// durationOffset: seconds to add to every cue's start/end (Fix 2 — intro offset).
+// The LRC file itself may also carry an [offset:N] metadata tag (milliseconds)
+// which is read and combined with durationOffset (Fix 1).
 function parseLRC(
-  lrc: string
+  lrc: string,
+  durationOffset = 0
 ): Array<{ start: number; end: number; spanish: string }> | null {
   const lines = lrc.split("\n");
   const CUE_RE = /^\[(\d+):(\d+(?:\.\d+)?)\](.*)$/;
+  // LRC spec: [offset:+/-milliseconds] shifts all timestamps by that amount.
+  // Positive = lyrics should start later; negative = earlier.
+  const OFFSET_RE = /^\[offset:\s*([+-]?\d+)\s*\]/i;
+
+  // Scan header lines for [offset:N] before processing cues (AC-F1.1)
+  let lrcTagOffset = 0;
+  for (const line of lines) {
+    const m = line.trim().match(OFFSET_RE);
+    if (m) {
+      lrcTagOffset = parseInt(m[1], 10) / 1000; // ms → seconds
+      console.log(`[/api/lyrics] LRC [offset:] tag found: ${m[1]}ms → ${lrcTagOffset.toFixed(3)}s`);
+      break; // only one offset tag expected per file
+    }
+  }
+
+  // Combined shift: intro offset (Fix 2) + LRC file offset tag (Fix 1)
+  const totalOffset = durationOffset + lrcTagOffset;
 
   const timed: Array<{ start: number; text: string }> = [];
   for (const line of lines) {
     const m = line.trim().match(CUE_RE);
     if (!m) continue;
-    const start = parseInt(m[1], 10) * 60 + parseFloat(m[2]);
+    const rawStart = parseInt(m[1], 10) * 60 + parseFloat(m[2]);
     const text = m[3].trim();
     // Skip metadata tags (e.g. [ar:Artist], [ti:Title]) — they won't match CUE_RE
     // Skip blank/instrumental lines
     if (text.length < 2) continue;
-    timed.push({ start, text });
+    // Clamp to >= 0 so a large negative offset can't produce impossible timestamps
+    timed.push({ start: Math.max(0, rawStart + totalOffset), text });
   }
 
   if (timed.length < 3) return null;
@@ -321,14 +377,8 @@ async function fetchFromGenius(
     const ytKey = process.env.YOUTUBE_API_KEY;
     let durationSecs = 210; // sensible default (3.5 min) if API call fails
     if (ytKey) {
-      const durRes = await fetch(
-        `https://www.googleapis.com/youtube/v3/videos?id=${videoId}&part=contentDetails&key=${ytKey}`
-      );
-      if (durRes.ok) {
-        const durData = await durRes.json();
-        const iso = durData.items?.[0]?.contentDetails?.duration ?? "";
-        if (iso) durationSecs = parseIsoDuration(iso);
-      }
+      const fetched = await fetchYoutubeDuration(videoId, ytKey);
+      if (fetched !== null) durationSecs = fetched;
     }
 
     // Step 3: Search Genius for the song
@@ -450,6 +500,23 @@ ${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`;
     return clamped;
   } catch (err) {
     console.warn("[/api/lyrics] Gemini timestamp estimation failed:", err);
+    return null;
+  }
+}
+
+// Fetch a YouTube video's duration in seconds via the Data API.
+// Returns null if the API key is missing or the request fails — callers
+// should treat null as "unknown" and skip any offset logic.
+async function fetchYoutubeDuration(videoId: string, apiKey: string): Promise<number | null> {
+  try {
+    const res = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?id=${videoId}&part=contentDetails&key=${apiKey}`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const iso = data.items?.[0]?.contentDetails?.duration ?? "";
+    return iso ? parseIsoDuration(iso) : null;
+  } catch {
     return null;
   }
 }
