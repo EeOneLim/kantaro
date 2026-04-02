@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { parseSearchResults, youtubeApiFetch } from "@/lib/youtube";
+import { parseSearchResults, youtubeApiFetch, mergeViewCounts } from "@/lib/youtube";
 
 // Fetches recent videos for a specific channel.
 // Used when the user clicks a channel card on the landing page.
@@ -31,6 +31,6 @@ export async function GET(
   }
 
   const data = await response.json();
-  const videos = parseSearchResults(data.items ?? []);
+  const videos = await mergeViewCounts(parseSearchResults(data.items ?? []));
   return NextResponse.json({ videos });
 }

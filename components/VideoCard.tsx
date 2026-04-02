@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { YouTubeVideo } from "@/types";
+import { formatViewCount, formatRelativeTime } from "@/lib/youtube";
 
 interface VideoCardProps {
   video: YouTubeVideo;
@@ -10,6 +11,14 @@ interface VideoCardProps {
 }
 
 export default function VideoCard({ video, isSelected, onClick }: VideoCardProps) {
+  // Build the "2.4M views • 2 days ago" string — omit any part that's unavailable
+  const meta = [
+    video.viewCount ? formatViewCount(video.viewCount) : null,
+    video.publishedAt ? formatRelativeTime(video.publishedAt) : null,
+  ]
+    .filter(Boolean)
+    .join(" • ");
+
   return (
     <button
       onClick={onClick}
@@ -24,23 +33,26 @@ export default function VideoCard({ video, isSelected, onClick }: VideoCardProps
         }
       `}
     >
-      {/* 16:9 thumbnail */}
+      {/* 16:9 thumbnail — full width on mobile */}
       <div className="relative w-full aspect-video">
         <Image
           src={video.thumbnail}
           alt={video.title}
           fill
           className="object-cover"
-          sizes="(max-width: 768px) 50vw, (max-width: 1024px) 33vw, 20vw"
+          sizes="(max-width: 768px) 100vw, (max-width: 1024px) 33vw, 20vw"
         />
       </div>
 
-      {/* Title + channel */}
+      {/* Title + channel + views/time */}
       <div className="p-2">
         <p className="text-foreground text-sm font-medium line-clamp-2 leading-snug">
           {video.title}
         </p>
         <p className="text-muted text-xs mt-1 truncate">{video.channelName}</p>
+        {meta && (
+          <p className="text-muted text-xs mt-0.5 truncate">{meta}</p>
+        )}
       </div>
     </button>
   );
