@@ -5,6 +5,8 @@ export interface YouTubeVideo {
   channelName: string;
   channelId: string;    // Kept for future channel-browsing features (Phase 2+)
   thumbnail: string;    // URL to the video's thumbnail image
+  viewCount?: string;   // Raw view count string from statistics e.g. "2400000"
+  publishedAt?: string; // ISO 8601 publish date e.g. "2024-01-15T12:00:00Z"
 }
 
 // Represents a YouTube channel returned by a channel-type search

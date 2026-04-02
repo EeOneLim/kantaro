@@ -326,7 +326,7 @@ export default function Home() {
       {/* ── Sticky header ── shown once the user has left the landing state */}
       {!isLanding && (
         <header className="sticky top-0 z-20 bg-background/95 backdrop-blur-sm border-b border-border px-4 py-3">
-          <div className="max-w-screen-xl mx-auto flex items-center gap-4">
+          <div className="max-w-screen-xl mx-auto flex items-center gap-2 sm:gap-4">
             <button
               onClick={handleBackToLanding}
               className="font-[family-name:var(--font-sora)] font-bold text-xl text-accent whitespace-nowrap"
