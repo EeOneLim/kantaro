@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { YouTubeVideo, YouTubeChannel, LyricCue } from "@/types";
 import { isCompilationVideo } from "@/lib/youtube";
+import { fetchYouTubeTranscriptClientSide } from "@/lib/youtube-transcript-client";
 import SearchBar from "@/components/SearchBar";
 import VideoGrid from "@/components/VideoGrid";
 import Player, { YouTubePlayerInstance } from "@/components/Player";
@@ -176,6 +177,35 @@ export default function Home() {
     setActiveCueIndex(-1);
 
     try {
+      // Path A: client-side YouTube fetch (residential IP — bypasses Vercel block).
+      // The function returns null on any failure (CORS, no captions, parse error),
+      // and we fall through to the server-side chain transparently.
+      const rawCues = await fetchYouTubeTranscriptClientSide(videoId);
+
+      if (rawCues) {
+        // Got raw Spanish cues from YouTube — translate them server-side so the
+        // Gemini API key stays off the client.
+        const transRes = await fetch("/api/translate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lines: rawCues.map((c) => c.spanish) }),
+        });
+        const { translations } = transRes.ok
+          ? await transRes.json()
+          : { translations: [] };
+
+        const cues: LyricCue[] = rawCues.map((c, i) => ({
+          ...c,
+          // AC-2.3: if translation missing, show Spanish line as fallback
+          english: translations[i] || c.spanish,
+        }));
+        lyricsCacheRef.current[videoId] = cues;
+        setLyrics(cues);
+        return;
+      }
+
+      // Path B: server-side fallback chain (LRCLib → Genius).
+      // Used when YouTube client fetch returns null — CORS block, no captions, etc.
       const res = await fetch(`/api/lyrics?videoId=${videoId}`);
       const data = await res.json();
 
