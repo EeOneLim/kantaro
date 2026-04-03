@@ -45,7 +45,7 @@ export default function SearchBar({
       <button
         type="submit"
         aria-label="Search"
-        className="bg-accent text-background font-semibold rounded-full hover:bg-accent-hover transition-colors duration-200 flex items-center justify-center
+        className="bg-accent text-background font-semibold rounded-full hover:bg-accent-hover transition-colors duration-200 flex items-center justify-center flex-shrink-0
           w-9 h-9 sm:w-auto sm:h-auto sm:px-5 sm:py-3"
       >
         {/* Magnifying glass — visible on mobile only */}

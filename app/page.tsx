@@ -355,11 +355,11 @@ export default function Home() {
     <div className="min-h-screen bg-background">
       {/* ── Sticky header ── shown once the user has left the landing state */}
       {!isLanding && (
-        <header className="sticky top-0 z-20 bg-background/95 backdrop-blur-sm border-b border-border px-4 py-3">
+        <header className="sticky top-0 z-20 bg-background/95 backdrop-blur-sm border-b border-border px-3 sm:px-4 py-3">
           <div className="max-w-screen-xl mx-auto flex items-center gap-2 sm:gap-4">
             <button
               onClick={handleBackToLanding}
-              className="font-[family-name:var(--font-sora)] font-bold text-xl text-accent whitespace-nowrap"
+              className="font-[family-name:var(--font-sora)] font-bold text-base sm:text-xl text-accent whitespace-nowrap"
             >
               Kantaro
             </button>
@@ -370,7 +370,7 @@ export default function Home() {
               </span>
             )}
 
-            <div className="flex-1 max-w-lg">
+            <div className="flex-1 min-w-0 max-w-lg">
               <SearchBar onSearch={handleSearch} initialValue={query} />
             </div>
           </div>
