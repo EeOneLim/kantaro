@@ -42,7 +42,7 @@ export default function SubtitlePanel({
   // Shared outer shell — fixed height on mobile; on desktop, fills the absolutely
   // positioned wrapper in page.tsx (which is locked to the player's height).
   const shell =
-    "h-48 lg:h-full flex flex-col bg-surface rounded-lg border border-border overflow-hidden";
+    "h-72 lg:h-full flex flex-col bg-surface rounded-lg border border-border overflow-hidden";
 
   // ── Loading state: pulsing amber mic icon (AC-7.1) ──────────────────────────
   if (isLoading) {
@@ -94,7 +94,7 @@ export default function SubtitlePanel({
              */}
             <p
               className={`font-medium leading-snug ${
-                isActive ? "text-accent text-sm" : "text-foreground text-xs"
+                isActive ? "text-accent text-base" : "text-foreground text-sm"
               }`}
             >
               {cue.spanish.split(" ").map((word, wi, arr) => (
@@ -111,7 +111,7 @@ export default function SubtitlePanel({
             </p>
 
             {/* English translation — always one size smaller than Spanish */}
-            <p className="text-muted text-xs leading-snug mt-0.5">
+            <p className="text-muted text-sm leading-snug mt-0.5">
               {cue.english}
             </p>
           </div>

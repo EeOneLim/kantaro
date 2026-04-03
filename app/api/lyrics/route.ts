@@ -1,13 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { YoutubeTranscript } from "youtube-transcript";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { translateInChunks, callGeminiWithFallback } from "@/lib/gemini-translate";
 import { LyricCue } from "@/types";
 
 // Cap: a typical song has 60-100 cues. Compilation mixes can have thousands.
 // We limit to 300 so Gemini translation stays fast and within token budgets.
 const MAX_CUES = 300;
-// Translate in batches so we never exceed Gemini's input token limit in one call.
-const TRANSLATION_CHUNK_SIZE = 80;
 
 // Server-side in-memory cache. Persists across requests on the same
 // server instance so repeat plays (new tabs, page refreshes) cost nothing.
@@ -26,14 +23,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ cues: serverLyricsCache.get(videoId) });
     }
 
-    // Try to get a usable set of Spanish cues. YouTube is the ideal source
-    // (timestamps already aligned with the video), but in production their
-    // API frequently rejects requests from cloud IP ranges. LRCLib is the
-    // free community fallback with strong coverage for Latin music.
-    let spanishCues = await fetchFromYouTube(videoId);
+    // Source priority: Supadata (paid API, accurate YouTube captions, not IP-blocked)
+    // → LRCLib (free community database) → Genius + Gemini timestamps (last resort).
+    let spanishCues = await fetchFromSupadata(videoId);
 
     if (!spanishCues) {
-      console.log(`[/api/lyrics] YouTube failed for ${videoId}, trying LRCLib`);
+      console.log(`[/api/lyrics] Supadata failed for ${videoId}, trying LRCLib`);
       spanishCues = await fetchFromLRCLib(videoId);
     }
 
@@ -74,60 +69,57 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// --- Source 1: YouTube captions via youtube-transcript ---
+// --- Source 1: Supadata (supadata.ai) ---
 
-// Returns normalised cues or null if YouTube captions are unavailable/unusable.
-// In production, YouTube frequently blocks requests from cloud IPs, so null
-// is the common case and the caller should try LRCLib next.
-async function fetchFromYouTube(
+// Supadata is a paid API that fetches YouTube transcripts from their own
+// infrastructure, bypassing the Vercel IP block that prevents us from calling
+// YouTube directly. Falls back gracefully if the key isn't configured.
+async function fetchFromSupadata(
   videoId: string
 ): Promise<Array<{ start: number; end: number; spanish: string }> | null> {
-  try {
-    // Fire both the Spanish-specific and default language requests in parallel.
-    // This eliminates ~200–800ms on the fallback path when no explicit Spanish
-    // track exists.
-    const [esResult, defaultResult] = await Promise.allSettled([
-      YoutubeTranscript.fetchTranscript(videoId, { lang: "es" }),
-      YoutubeTranscript.fetchTranscript(videoId),
-    ]);
+  const apiKey = process.env.SUPADATA_API_KEY;
+  if (!apiKey) return null;
 
-    let rawCues;
-    if (esResult.status === "fulfilled" && esResult.value?.length) {
-      rawCues = esResult.value;
-    } else if (defaultResult.status === "fulfilled" && defaultResult.value?.length) {
-      rawCues = defaultResult.value;
-    } else {
+  try {
+    const res = await fetch(
+      `https://api.supadata.ai/v1/youtube/transcript?videoId=${videoId}&lang=es`,
+      { headers: { "x-api-key": apiKey } }
+    );
+
+    // 206 means transcript unavailable for this video — not an error, just no captions.
+    if (res.status === 206 || !res.ok) {
+      const errBody = await res.text().catch(() => "");
+      console.warn(`[/api/lyrics] Supadata HTTP ${res.status} for ${videoId}:`, errBody.slice(0, 200));
       return null;
     }
 
-    // AC-1.7: Guard against empty or junk caption tracks
-    if (!rawCues || rawCues.length < 3) return null;
+    const data = await res.json();
+    if (!Array.isArray(data.content)) {
+      console.warn(`[/api/lyrics] Supadata unexpected response shape for ${videoId}:`, JSON.stringify(data).slice(0, 200));
+      return null;
+    }
+
+    // AC-1.7: Reject junk tracks
+    const rawCues = data.content as Array<{ text: string; offset: number; duration: number }>;
     const validCues = rawCues.filter((c) => c.text && c.text.trim().length >= 2);
     if (validCues.length < 3) return null;
 
-    // The youtube-transcript package uses milliseconds when it hits the InnerTube
-    // API (the primary path) and seconds when it falls back to web scraping.
-    // Heuristic: if any offset > 1000, the values are almost certainly milliseconds
-    // (no song has a lyric starting after 16+ minutes in "seconds" mode).
-    const isMs = validCues.some((c) => c.offset > 1000);
-    const toSeconds = (v: number) => (isMs ? v / 1000 : v);
+    const trimmed = validCues.slice(0, MAX_CUES);
 
-    // Cap to MAX_CUES — compilations can have thousands of lines we don't need
-    const trimmedCues = validCues.slice(0, MAX_CUES);
-
-    console.log(`[/api/lyrics] source: youtube (${trimmedCues.length} cues)`);
-
-    return trimmedCues.map((c, i) => {
-      const start = toSeconds(c.offset);
-      const ownEnd = toSeconds(c.offset + c.duration);
-      const nextStart = trimmedCues[i + 1] ? toSeconds(trimmedCues[i + 1].offset) : ownEnd;
+    // Supadata returns offset and duration in milliseconds, same as the InnerTube API.
+    console.log(`[/api/lyrics] source: supadata (${trimmed.length} cues)`);
+    return trimmed.map((c, i) => {
+      const start = c.offset / 1000;
+      const ownEnd = (c.offset + c.duration) / 1000;
+      const nextStart = trimmed[i + 1] ? trimmed[i + 1].offset / 1000 : ownEnd;
       return {
         start,
         end: Math.max(ownEnd, nextStart),
         spanish: c.text.trim().replace(/\n/g, " "),
       };
     });
-  } catch {
+  } catch (err) {
+    console.warn("[/api/lyrics] Supadata fetch failed:", err);
     return null;
   }
 }
@@ -463,83 +455,4 @@ function parseIsoDuration(iso: string): number {
          parseInt(m[3] || "0");
 }
 
-// --- Translation ---
-
-// Split lines into chunks and translate all chunks in parallel.
-// Each chunk is small enough to stay within Gemini's token limits;
-// firing them simultaneously cuts total translation time from
-// (N × avg_chunk_time) down to max(chunk_times) — typically 3× faster.
-async function translateInChunks(lines: string[]): Promise<string[]> {
-  const chunks: string[][] = [];
-  for (let i = 0; i < lines.length; i += TRANSLATION_CHUNK_SIZE) {
-    chunks.push(lines.slice(i, i + TRANSLATION_CHUNK_SIZE));
-  }
-  // All chunk requests fire at once; we wait for all to settle.
-  const translatedChunks = await Promise.all(chunks.map(translateWithGemini));
-  return translatedChunks.flat();
-}
-
-// Translate one chunk of Spanish lyric lines to English using Gemini 2.5 Flash.
-// Model fallback chain — tries each in order, moves to the next on any error.
-// gemini-2.5-flash-lite is the cheapest/fastest but prone to 503s under high demand;
-// the older models have more stable capacity at the cost of slightly higher latency.
-const GEMINI_MODELS = [
-  "gemini-2.5-flash-lite",
-  "gemini-2.0-flash-lite",
-  "gemini-1.5-flash-lite-001",
-];
-
-async function callGeminiWithFallback(apiKey: string, prompt: string): Promise<string> {
-  let lastError: unknown;
-  for (const modelName of GEMINI_MODELS) {
-    try {
-      const genai = new GoogleGenerativeAI(apiKey);
-      const model = genai.getGenerativeModel({ model: modelName });
-      const result = await model.generateContent(prompt);
-      if (modelName !== GEMINI_MODELS[0]) {
-        console.log(`[/api/lyrics] Used fallback model: ${modelName}`);
-      }
-      return result.response.text();
-    } catch (err) {
-      console.warn(`[/api/lyrics] Model ${modelName} failed, trying next:`, (err as Error).message);
-      lastError = err;
-    }
-  }
-  throw lastError;
-}
-
-async function translateWithGemini(lines: string[]): Promise<string[]> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey.startsWith("your_")) {
-    console.warn("[lyrics] GEMINI_API_KEY not configured — skipping translation");
-    return lines.map(() => "");
-  }
-
-  const prompt = `You are translating Spanish song lyrics to English.
-Translate each numbered line with musical and poetic intent — natural and flowing, not word-for-word literal.
-Preserve the emotional tone and rhythm of the original.
-Return ONLY a valid JSON array of strings, one English translation per line, in the same order.
-Do not include any markdown, code blocks, or explanation.
-
-Spanish lines:
-${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`;
-
-  const raw = (await callGeminiWithFallback(apiKey, prompt)).trim();
-
-  // Strip markdown code fences if Gemini wraps its response anyway
-  const cleaned = raw
-    .replace(/^```(?:json)?\n?/, "")
-    .replace(/\n?```$/, "")
-    .trim();
-
-  const parsed = JSON.parse(cleaned);
-
-  if (!Array.isArray(parsed)) {
-    throw new Error("Gemini response was not a JSON array");
-  }
-
-  // Gemini occasionally returns 1-2 extra items or drops one.
-  // Trim any excess; pad with "" so callers fall back to Spanish for missing lines.
-  const normalised = lines.map((_, i) => (parsed[i] as string) ?? "");
-  return normalised;
-}
+// Translation is handled by the shared lib/gemini-translate.ts utility.

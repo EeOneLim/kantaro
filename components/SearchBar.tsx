@@ -30,7 +30,7 @@ export default function SearchBar({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex gap-2 w-full">
+    <form onSubmit={handleSubmit} className="flex items-center gap-2 w-full">
       <input
         type="text"
         value={value}
