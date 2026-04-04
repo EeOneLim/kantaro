@@ -300,13 +300,8 @@ export default function Home() {
     // AC-1.2: Lyrics fetch begins immediately on video selection
     fetchLyrics(video.id);
 
-    // On mobile the player is above the grid; scroll it into view smoothly
-    setTimeout(() => {
-      playerContainerRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    }, 50);
+    // Scroll to top so the player is immediately visible when a video is selected
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function handleBackToLanding() {
