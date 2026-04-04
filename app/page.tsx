@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { YouTubeVideo, YouTubeChannel, LyricCue } from "@/types";
 import { isCompilationVideo } from "@/lib/youtube";
+import { fetchYouTubeTranscriptClientSide } from "@/lib/youtube-transcript-client";
 import SearchBar from "@/components/SearchBar";
 import VideoGrid from "@/components/VideoGrid";
 import Player, { YouTubePlayerInstance } from "@/components/Player";
@@ -176,6 +177,35 @@ export default function Home() {
     setActiveCueIndex(-1);
 
     try {
+      // Path A: client-side YouTube fetch (residential IP — bypasses Vercel block).
+      // The function returns null on any failure (CORS, no captions, parse error),
+      // and we fall through to the server-side chain transparently.
+      const rawCues = await fetchYouTubeTranscriptClientSide(videoId);
+
+      if (rawCues) {
+        // Got raw Spanish cues from YouTube — translate them server-side so the
+        // Gemini API key stays off the client.
+        const transRes = await fetch("/api/translate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lines: rawCues.map((c) => c.spanish) }),
+        });
+        const { translations } = transRes.ok
+          ? await transRes.json()
+          : { translations: [] };
+
+        const cues: LyricCue[] = rawCues.map((c, i) => ({
+          ...c,
+          // AC-2.3: if translation missing, show Spanish line as fallback
+          english: translations[i] || c.spanish,
+        }));
+        lyricsCacheRef.current[videoId] = cues;
+        setLyrics(cues);
+        return;
+      }
+
+      // Path B: server-side fallback chain (LRCLib → Genius).
+      // Used when YouTube client fetch returns null — CORS block, no captions, etc.
       const res = await fetch(`/api/lyrics?videoId=${videoId}`);
       const data = await res.json();
 
@@ -270,13 +300,8 @@ export default function Home() {
     // AC-1.2: Lyrics fetch begins immediately on video selection
     fetchLyrics(video.id);
 
-    // On mobile the player is above the grid; scroll it into view smoothly
-    setTimeout(() => {
-      playerContainerRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    }, 50);
+    // Scroll to top so the player is immediately visible when a video is selected
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function handleBackToLanding() {
@@ -325,11 +350,11 @@ export default function Home() {
     <div className="min-h-screen bg-background">
       {/* ── Sticky header ── shown once the user has left the landing state */}
       {!isLanding && (
-        <header className="sticky top-0 z-20 bg-background/95 backdrop-blur-sm border-b border-border px-4 py-3">
-          <div className="max-w-screen-xl mx-auto flex items-center gap-4">
+        <header className="sticky top-0 z-20 bg-background/95 backdrop-blur-sm border-b border-border px-3 sm:px-4 py-3">
+          <div className="max-w-screen-xl mx-auto flex items-center gap-2 sm:gap-4">
             <button
               onClick={handleBackToLanding}
-              className="font-[family-name:var(--font-sora)] font-bold text-xl text-accent whitespace-nowrap"
+              className="font-[family-name:var(--font-sora)] font-bold text-base sm:text-xl text-accent whitespace-nowrap"
             >
               Kantaro
             </button>
@@ -340,7 +365,7 @@ export default function Home() {
               </span>
             )}
 
-            <div className="flex-1 max-w-lg">
+            <div className="flex-1 min-w-0 max-w-lg">
               <SearchBar onSearch={handleSearch} initialValue={query} />
             </div>
           </div>

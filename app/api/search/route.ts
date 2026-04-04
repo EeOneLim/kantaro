@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { parseSearchResults, parseChannelResults, youtubeApiFetch } from "@/lib/youtube";
+import { parseSearchResults, parseChannelResults, youtubeApiFetch, mergeViewCounts } from "@/lib/youtube";
 
 // Secure proxy between the browser and YouTube's API.
 // The API key never leaves the server — the browser only calls /api/search.
@@ -46,6 +46,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ channels });
   }
 
-  const videos = parseSearchResults(data.items ?? []);
+  const videos = await mergeViewCounts(parseSearchResults(data.items ?? []));
   return NextResponse.json({ videos });
 }
