@@ -486,7 +486,7 @@ async function translateInChunks(lines: string[]): Promise<string[]> {
 const GEMINI_MODELS = [
   "gemini-2.5-flash-lite",
   "gemini-2.0-flash-lite",
-  "gemini-1.5-flash-lite-001",
+  "gemini-1.5-flash",
 ];
 
 async function callGeminiWithFallback(apiKey: string, prompt: string): Promise<string> {
