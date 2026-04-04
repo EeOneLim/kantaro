@@ -11,7 +11,7 @@ const TRANSLATION_CHUNK_SIZE = 80;
 const GEMINI_MODELS = [
   "gemini-2.5-flash-lite",
   "gemini-2.0-flash-lite",
-  "gemini-1.5-flash-lite-001",
+  "gemini-1.5-flash",
 ];
 
 // Split lines into chunks and translate all chunks in parallel.
