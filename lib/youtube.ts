@@ -1,23 +1,28 @@
 import { YouTubeVideo, YouTubeChannel } from "@/types";
 
-// Fetches a YouTube Data API URL, automatically falling back to a second API key
-// if the first returns 403 (quota exceeded). Both keys must use the same URL —
-// this function swaps only the `key` parameter.
+// Fetches a YouTube Data API URL, automatically falling back through up to three
+// API keys if any returns 403 (quota exceeded). Each key should be from a
+// separate Google Cloud project so they have independent quota pools.
 export async function youtubeApiFetch(url: URL): Promise<Response> {
-  const key1 = process.env.YOUTUBE_API_KEY;
-  const key2 = process.env.YOUTUBE_API_KEY_2;
+  const keys = [
+    process.env.YOUTUBE_API_KEY,
+    process.env.YOUTUBE_API_KEY_2,
+    process.env.YOUTUBE_API_KEY_3,
+  ].filter(Boolean) as string[];
 
-  if (!key1) throw new Error("YOUTUBE_API_KEY is not set");
+  if (keys.length === 0) throw new Error("YOUTUBE_API_KEY is not set");
 
-  url.searchParams.set("key", key1);
-  const res1 = await fetch(url.toString());
+  let lastRes: Response | null = null;
+  for (let i = 0; i < keys.length; i++) {
+    url.searchParams.set("key", keys[i]);
+    const res = await fetch(url.toString());
+    if (res.status !== 403) return res;
+    console.warn(`YouTube API key ${i + 1} quota exceeded, trying next key`);
+    lastRes = res;
+  }
 
-  // Only fall back on 403 (quota exceeded / key rejected) — not on other errors
-  if (res1.status !== 403 || !key2) return res1;
-
-  console.warn("Primary YouTube API key quota exceeded, falling back to key 2");
-  url.searchParams.set("key", key2);
-  return fetch(url.toString());
+  // All keys exhausted — return the last 403 response so callers can handle it
+  return lastRes!;
 }
 
 // The YouTube Data API returns deeply nested objects.
